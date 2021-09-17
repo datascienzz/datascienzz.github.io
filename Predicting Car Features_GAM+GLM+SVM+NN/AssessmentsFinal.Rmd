@@ -1,0 +1,751 @@
+---
+title: 'Machine Learning I: Assessments'
+author: "Gökce Ergün, Sebastian Müller, Nicolas Garzon, Jonathan Hahn"
+date: "27 10 2020"
+output:
+  pdf_document: default
+---
+
+```{r setup, include=FALSE}
+#rm(list = ls(all = TRUE))
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+## Aim of the project
+
+This project is designed for a potential platform where people can resell their cars.
+The aim is to extend the functions on the website.
+- Predicting the price to give the reseller a fair price range suggestion and so that the buyer doesn't have to worry about paying too much money.
+- Predicting other variables which will be suggested for the reseller if he can't remember his VIN number and doesn't know different attributes.
+
+Faster and easier posting of cars without lack of information.
+Higher trust for people which don't have much experience with cars.
+
+
+## The Used Car Dataset
+
+Every row represents one posting of one car. It includes important information like: mile age, car age, transmission type and listed price.
+
+```{r cars, echo=FALSE, results = FALSE}
+file<-"./data/cars.csv"
+cars_data<-read.csv2(file, header = TRUE, sep = ",")
+#str(cars_data)
+```
+
+```{r used_car_data_set}
+head(cars_data)
+```
+
+
+## Data cleaning
+
+1. Price and engine capacity columns are converted to float. 
+
+```{r}
+cars_data$engine_capacity <- as.numeric(as.character(cars_data$engine_capacity))
+cars_data$price_usd <- as.numeric(as.character(cars_data$price_usd))
+```
+
+2. Dealing with missing values
+
+There are only 10 Null values for "Engine Capacity".
+Dropping these null values:
+```{r}
+cars_data = na.omit(cars_data)
+```
+
+3. Calculating the age of the car
+The *year_produced* is replaced by the the variable *age*.
+```{r}
+cars_data$age <- 2020 - cars_data$year_produced
+cars_data$year_produced<-NULL
+```
+
+
+4. Recoding the variables with two level as dummy variables (True-False: 1-0) 
+
+```{r}
+cars_data$transmission_is_automatic <- ifelse(cars_data$transmission == 'automatic' , 1, 0)
+cars_data$transmission<-NULL
+
+cars_data$has_warranty <- as.numeric(lapply(cars_data$has_warranty, as.logical))
+
+cars_data$is_exchangeable   <- as.numeric(lapply(cars_data$is_exchangeable, as.logical))
+```
+
+Engine fuel and engine type show the same thing, so engine_type will be used. 
+```{r}
+table(cars_data$engine_fuel, cars_data$engine_type)
+```
+
+The variables *engine_has_gas*, *engine_fuel* and *engine_type* are giving all similar information.
+Therefore we will recode *engine_type*  as *is_diesel*, 1 if diesel, 0 if gasoline, and drop the other variables
+as they are not needed anymore.
+
+
+```{r clean_fuel, message=FALSE, warning=FALSE}
+library(tidyverse)
+cars_data <- cars_data %>%
+  mutate(is_diesel = ifelse(engine_type == 'diesel', 1, 0))
+cars_data$engine_has_gas<-NULL
+cars_data$engine_type<-NULL
+cars_data$engine_fuel<-NULL
+```
+
+To make the model more performant we reduce the variables based on domain knowledge:
+The *model_name* is removed because the variance of this factor is too high and would make the model very complex.
+
+```{r}
+cars_data$model_name<-NULL
+```
+
+
+We also drop all *features* because we were not able to find any information regarding their meaning.
+```{r}
+cars_data$feature_0<-NULL
+cars_data$feature_1<-NULL
+cars_data$feature_2<-NULL
+cars_data$feature_3<-NULL
+cars_data$feature_4<-NULL
+cars_data$feature_5<-NULL
+cars_data$feature_6<-NULL
+cars_data$feature_7<-NULL
+cars_data$feature_8<-NULL
+cars_data$feature_9<-NULL
+```
+
+The *location_region* is removed because the variance of this factor is too high and would make the model very complex.
+```{r}
+cars_data$location_region<-NULL
+```
+
+## Color
+
+In the attribute *color* we have a class imbalance therefore we recode the colors with a very small representation as "other".
+
+```{r}
+table(cars_data$color)
+cars_data$color[cars_data$color %in% c("violet","orange","yellow")] <- "other"
+
+```
+
+## body type
+The same problem is also found in *body_type*:
+```{r}
+table(cars_data$body_type)
+cars_data <- subset(cars_data,!body_type %in% c("limousine","cabriolet","pickup"))
+cars_data<-droplevels(cars_data)
+```
+
+
+### Recode *manufacturer_name* to *is_luxus* binary variable
+
+The attribute *manufacturer_name* also exhibits a lot of variance. Therefore we recode this variable into luxury cars and non luxury cars.
+
+Luxury cars are decided based on domain knowledge: Acura, Audi, BMW, Cadillac, Infiniti, Jaguar, Land Rover, Lexus, Mercedes-Benz, Porsche, Volvo 
+```{r message=FALSE}
+library(dplyr)
+cars_data <- cars_data %>%
+  mutate(is_luxus = ifelse((manufacturer_name == 'Acura'
+                                |manufacturer_name == 'Audi'
+                                |manufacturer_name == 'BMW'
+                                |manufacturer_name == 'Cadillac'
+                                |manufacturer_name == 'Infiniti'
+                                |manufacturer_name == 'Jaguar'
+                                |manufacturer_name == 'Land Rover'
+                                |manufacturer_name == 'Lexus'
+                                |manufacturer_name == 'Mercedes-Benz'
+                                |manufacturer_name == 'Porsche'
+                                |manufacturer_name == 'Volvo')
+                               , 1, 0))
+
+cars_data$manufacturer_name<-NULL
+```
+
+
+## Visual inspections of the Data
+
+Having performed the necessary data transformations, we proceed to the analysis of the data below.
+
+1. Selecting numeric columns for the correlation matrix
+
+```{r}
+
+str(cars_data)
+
+names(dplyr::select_if(cars_data,is.numeric))
+cars_data_num <- cars_data[c("odometer_value", 
+                             "engine_capacity", 
+                             "price_usd", 
+                             "number_of_photos", 
+                             "up_counter", 
+                             "duration_listed","age" )]
+col_order <- c("price_usd", 
+               "odometer_value", 
+               "engine_capacity", 
+               "number_of_photos", 
+               "up_counter", 
+               "duration_listed",
+               "age" )
+cars_data_num <- cars_data_num[, col_order]
+```
+
+## Factor transformation
+
+```{r transformation}
+cars_data$is_luxus <- as.factor(as.character(cars_data$is_luxus))
+cars_data$is_diesel <- as.factor(as.character(cars_data$is_diesel))
+cars_data$transmission_is_automatic <- as.factor(as.character(cars_data$transmission_is_automatic))
+cars_data$is_exchangeable <- as.factor(as.character(cars_data$is_exchangeable))
+cars_data$drivetrain <- as.factor(as.character(cars_data$drivetrain))
+cars_data$state <- as.factor(as.character(cars_data$state))
+cars_data$has_warranty <- as.factor(as.character(cars_data$has_warranty))
+cars_data$body_type <- as.factor(as.character(cars_data$body_type))
+cars_data$color <- as.factor(as.character(cars_data$color))
+
+```
+
+
+
+2. Correlation matrix
+
+The correlation matrix is a great first step in better understanding the numerical data in the dataset and how their relationship to each other looks like.
+
+```{r corr_matrix, message=FALSE, fig.width = 20, fig.height = 16, cache=TRUE, warning=FALSE }
+library("PerformanceAnalytics")
+chart.Correlation(cars_data_num, histogram=TRUE, pch=19)
+```
+
+
+The correlation matrix shows that price of the car has a strong negative correlation with the age of car, a moderate negative correlation with odometer value, and low to moderate positive correlation with engine capacity and the number of photos that a car has. 
+
+The relationship between price and engine capacity looks linear, while its relationship with other significantly correlated variables is nonlinear. 
+
+```{r}
+par(mfrow = c(1, 2))
+hist(cars_data$price_usd, breaks = 100, main = "Distribution of the price", xlab="Price")
+hist(log(cars_data$price_usd), breaks = 100, main = "Log transformation", xlab="Price")
+```
+The price variable has a right-skewed distribution. Since the models work better with a normal distribution of the response variable, we excute a log transformation of the pric variable and use this version for our model fitting.
+
+
+### Examining the relationship between price and categorical variables
+
+After having examined the numerical data, we now turn to the binary and categorical variables to see if they have an impact on price.
+
+This will help us understand the data better and can be done with the creation of some boxplots.
+
+```{r fig.show="hold", out.width="50%"}
+#par(mfrow = c(5, 2))
+par(mar = c(4, 4, .1, .1))
+boxplot(price_usd~transmission_is_automatic, data = cars_data, col=(c("cornflowerblue","powderblue")))
+boxplot(price_usd~color, data = cars_data, col=(c("grey17","blue3","burlywood4","darkolivegreen3","azure4","pink","red","grey","white")),col.box="gray30")
+```
+
+As you can see in the plots the transmission type and the color have an influence on the price.
+
+```{r fig.show="hold", out.width="50%"}
+#par(mfrow = c(5, 2))
+par(mar = c(4, 4, .1, .1))
+boxplot(price_usd~is_diesel, data = cars_data, col=(c("cornflowerblue","powderblue")))
+boxplot(price_usd~is_luxus, data = cars_data, col=(c("cornflowerblue","powderblue")))
+```
+
+Is_diesel has almost no effect and is_luxus has a mild effect.
+Also, while it seems like is_luxus has only a small influence on the price we don't want to waste time on it because is_luxus might also be influenced by the age of the car.
+
+
+```{r fig.show="hold", out.width="50%"}
+#par(mfrow = c(5, 2))
+par(mar = c(4, 4, .1, .1))
+boxplot(price_usd~has_warranty, data = cars_data, col=(c("cornflowerblue","powderblue")))
+boxplot(price_usd~state, data = cars_data, col=(c("cornflowerblue","powderblue", "skyblue3")))
+```
+In the next two plots for *has_warranty* and *state* we can clearly see that they have an influence on the price.
+Obviously the price of the cars drops significantly when the car has had an accident.
+
+```{r fig.show="hold", out.width="50%"}
+#par(mfrow = c(5, 2))
+par(mar = c(4, 4, .1, .1))
+boxplot(price_usd~drivetrain, data = cars_data, col=(c("cornflowerblue","powderblue", "skyblue3")))
+boxplot(price_usd~is_exchangeable, data = cars_data, col=(c("cornflowerblue","powderblue")))
+```
+The *drivetrain* variable also has an influence on the price as cars with all-wheel drive are very helpfull in the winter, therefore the cars with all-wheel drive are in general more popular and also more expensive.
+
+```{r fig.show="hold", out.width="50%"}
+boxplot(price_usd~body_type, data = cars_data, col=rainbow(length(unique(cars_data$body_type))))
+ggplot(cars_data, aes(x=body_type, y=price_usd, fill=body_type)) + 
+   geom_boxplot(aes(fill = body_type)) +
+  theme_minimal() +
+  theme(legend.position = NULL)
+
+```
+
+Also when we take a look at the *body_type* we can see that there are differences.
+Particularly, suv's are more expensive than the other body_types.
+
+# Final look at the summary of the dataset
+
+As a final step we want to know if we can detect some outliers.
+
+
+```{r}
+summary(cars_data)
+```
+When we look at price a minimum of 1$ looks far too small for a reasonable number and is likely caused by an error in data recording.
+Therefore we exclude all observations with a price smaller than 50$.
+
+```{r exclude price_usd extreme outliers}
+cars_data <- cars_data %>% filter(price_usd >= 50)
+
+#str(cars_data)
+summary(cars_data)
+```
+This already looks better.
+The odometer value of 1.000.000 miles also does not appear to be a plausible value.
+
+```{r plot, message=FALSE, warning=FALSE}
+library("ggplot2")
+library(scales)
+ggp <- ggplot(data = cars_data, aes(x=price_usd, y=odometer_value)) + geom_point()
+ggp2 <- ggplot(data = cars_data) + geom_histogram(aes(x=odometer_value))
+ggp2
+ggp
+```
+
+As we can see in the plot, there are quite a lot of values which are very high.
+
+Leaning into domain experience as a motivating factor, we decided not to include any posting with an odometer_value greater than 500.000 miles. It's very likely that such cars are damaged and don't run properly anymore.
+
+For the analysis we only want to include serious car postings to perform accurate and realistic real-world models.
+
+```{r exclude high mileage cars}
+cars_data <- cars_data %>% filter(odometer_value <= 500000)
+#str(cars_data)
+#summary(cars_data)
+```
+
+
+## Linear Model
+
+After fitting the model, we checked wether all variables were needed, by stepwise droping the least relevant variables.
+
+```{r first_lm_model, cache=TRUE}
+lm.cars01<-lm(log(price_usd) ~ ., data=cars_data)
+summary(lm.cars01)
+```
+
+The summary shows that the variables *color, odometer_value, engine_capacity, body_type, state, drivetrain, is_exchangeable, number_of_photos, up_counter, duration_listed, age, transmission_is_automatic, is_diesel* and *is_luxus* are relevant for building the model (with a significance level of at least .05), while *has_warranty* shows no influence on the price and is left out.
+
+Now the model is fitted again only with the previously inspected variables, that are statisticly relevant for predicting the price of a car:
+```{r second_lm_model, cache=TRUE}
+lm.cars02<-lm(log(price_usd) ~ 
+              color
+              + odometer_value
+              + engine_capacity
+              + body_type
+              + state
+              + drivetrain
+              + is_exchangeable
+              + number_of_photos
+              + up_counter
+              + duration_listed
+              + age
+              + transmission_is_automatic
+              + is_diesel
+              + is_luxus
+              , data=cars_data)
+drop1(lm.cars02, test="F")
+summary(lm.cars02)
+```
+
+The R² value hasn't changed and stays at 0.8195, which is already a good fit. However, we would like to improve the model by adding some interactions.
+
+
+### Linear Regression with interaction
+
+
+The first linear model with interaction terms was created based on educated guesses regarding possible meaningful interactions.
+
+``` {r adding_interaction_domain_knowledge}
+lm.cars.interaction.1 <- lm(log(price_usd) ~ . + age:body_type + engine_capacity:body_type + color:odometer_value + is_luxus:engine_capacity, data = cars_data)
+drop1(lm.cars.interaction.1, test = "F")
+summary(lm.cars.interaction.1)
+```
+
+By adding interaction terms we were able to improve the model to an R² value of 0.8269.
+
+
+In the second step all possible interactions were added and only a few had a strong impact on the response.
+``` {r adding_interaction_all, cache=TRUE}
+lm.cars.interaction.2 <- lm(log(price_usd) ~ .^2, data = cars_data)
+#drop1(lm.cars.interaction.2, test = "F")
+```
+
+
+## Non-linear models(used GAM)
+
+As we could see in the correlation matrix there was indication that some relationships might be represented better with a non-linear fit.
+
+Response variable: price
+Predictors: all of above + s(age), s(odometer value), s(number of photos)
+
+
+Graphical examination
+
+```{r gam_nl, message=FALSE, fig.width=12, fig.height=8, warnings=FALSE}
+library(ggplot2)
+library(gridExtra)
+gg.engine_capacity <- ggplot(data = cars_data, mapping = aes(y = price_usd, x = engine_capacity)) + geom_point() + geom_smooth()
+gg.age <- ggplot(data = cars_data, mapping = aes(y = price_usd, x = age)) + geom_point() + geom_smooth()
+gg.odometer_value <- ggplot(data = cars_data, mapping = aes(y = price_usd, x = odometer_value)) + geom_point() + geom_smooth()
+gg.number_of_photos <- ggplot(data = cars_data, mapping = aes(y = price_usd, x = number_of_photos)) + geom_point() + geom_smooth()
+grid.arrange(gg.engine_capacity, gg.age, gg.odometer_value, gg.number_of_photos, ncol = 2)
+```
+
+
+We visualized the relationship between each one of *engine_capacity*, *age*, *odometer_value* and *number_of_photos* with price and it's pretty clear that we have in all cases a non-linear relationship.
+
+The example with *age* shows well why a non-linear fit might be better. As the line rises a bit when the car is older than 40 years. This could mean that at this point cars are becoming oldtimers and are gaining a bit of value. However, it could also be because we are having less datapoints for old cars and the variance might be higher.
+
+To test whether a more flexible model might be able to accomodate this non-linear relationships we fit a gam model below.
+
+```{r message=FALSE}
+library(mgcv)
+gam.1 <- gam(log(price_usd) ~ s(engine_capacity) + s(age) + s(odometer_value) + s(number_of_photos) + color
+              + odometer_value
+              + engine_capacity
+              + body_type
+              + state
+              + drivetrain
+              + is_exchangeable
+              + number_of_photos
+              + up_counter
+              + duration_listed
+              + age
+              + transmission_is_automatic
+              + is_diesel
+              + is_luxus, data = cars_data)
+summary(gam.1)
+```
+
+All four smooth terms have an edf value greater than 1 and have therefore a non-linear relationship to the price.
+
+Adjusted $R^2$ value (0.85) indicates that 85% of the data can be explained with our model.
+
+If we compare this non-linear model with the linear model with interaction terms we ran previously we get a slightly higher adjusted R2. This makes sense because as we saw from the geom_smooth graphs, the relationship between some of the predictors and price is not perfectly linear when one allows the fitted line some flexibility. As a result we would have expected a non-linear model to better capture the relationship between the predictors. However, the improvement from 0.82 to 0.85 is not very significant, which means that the relationships are not extremely different from linear ones and is in accordance with what we observed in the visual analysis.
+
+
+ 
+## GLM for Binary
+
+The customer would like to have a tag for expensive vs non-expensive cars. This motivates our use of a Binary GLM model to predict the price as a binary variable using the binomial family.
+
+1. Recode price variable as dummy variable "is expensive"
+If the price of the car is equal or higher than 75% of all car prices: expensive (1). Otherwise, not expensive (0)
+
+```{r}
+summary(cars_data$price_usd)
+```
+
+```{r}
+cars_data$is_expensive = ifelse(cars_data$price_usd >= 8950, 1, 0)
+head(cars_data[c("price_usd", "is_expensive")])
+```
+
+We fit a plain glm with binomial distribution but we also combine a gam with a glm to see if that makes any difference.
+
+```{r}
+glm.logistic <- glm(is_expensive ~ age + engine_capacity + number_of_photos + odometer_value + transmission_is_automatic + state + drivetrain + is_diesel + color , family = "binomial", data = cars_data)
+
+glm.logistic2 <- gam(is_expensive ~ age + engine_capacity + number_of_photos + odometer_value + transmission_is_automatic + state + drivetrain + is_diesel + color , family = "quasibinomial", data = cars_data)
+
+summary(glm.logistic2)
+```
+
+```{r}
+with(summary(glm.logistic), 1 - deviance/null.deviance)
+```
+By combining the glm with gam we were able to get a higher adjusted R² of 0.69 compared to the glm with 0.65.
+
+## GLMs for Count
+
+The client is interested in understanding which factors play a role in the number of photos posted by a prospective car seller.Their hope is to use these insights to inform a plan of action to encourage sellers to post more photos. They believe more photos increases the likelihood of a sale.
+
+*number_of_photos* is our response variable and belongs to the count data type. Accordingly we fit a poisson family model below.
+The predictors used are *is_luxus*, *has_pop_color*, *age*, *price* (the were picked using common sense / educated guess)
+
+Also here we have two approaches: Combining with gam and without.
+
+family: poisson
+
+```{r}
+glm.no_of_photos <- glm(number_of_photos ~  price_usd + age + is_luxus + color, data = cars_data, family = "poisson")
+glm.no_of_photos2 <- gam(number_of_photos ~  price_usd + age + is_luxus + color, data = cars_data, family = "quasipoisson")
+
+summary(glm.no_of_photos)
+summary(glm.no_of_photos2)
+```
+
+The poisson model uses a natural logarithm to fit the model. Therefore, we need to take the exponentials of the coefficients when interpreting the magnitude of their effects.
+```{r}
+exp(coef(glm.no_of_photos))
+```
+
+The models shows that a luxus car posting increases the number of photos by about 7%.
+If the price increases by $1000 the number of photos increase by 1.75%
+
+The adjusted R² for that model is very low at 0.101. This is not surprising given the predictors we had at our disposition are probably a very small fraction of the relevant factors that determine how many photos a seller posts.
+
+
+## Variable and Feature Selection
+
+## What do we wanna show with that?
+
+```{r plot_body_type, message=FALSE, warning=FALSE}
+library("e1071")
+library(GGally)
+library(ggplot2)
+ggpairs(cars_data[4:17], ggplot2::aes(colour = body_type, alpha = 0.4))
+```
+
+
+
+
+# SVM
+
+As mentioned in the very beginning we also want to predict other variables like the *body_type* in order to automatically fill in this information in case the seller of the vehicle does not add it, or to suggest a seller who is clueless regarding car body types a possible value to fill for this information when they create their sale add in the platform.
+
+We believe an SVM model is suited for the task of creating a predictive model to categorize car body_types based on the predictors available.
+
+Due to the computational cost of running the model using our full data set, we instead fit the svm with a random sample of 5000 observations.
+
+ 
+```{r second approach for svm}
+library(caret)
+library(kernlab)
+library(e1071)
+set.seed(123)
+# random sampling of the data so that the training doesn't take so much time
+cars_data$is_expensive <- NULL
+cars_data <- sample_n(cars_data, 5000)
+cars_data <- na.omit(cars_data)
+
+#divide data in training and target
+svm_train <- cars_data
+svm_train$body_type <- NULL
+body_type <- cars_data %>% pull(body_type)
+
+#svm function
+dmy <- dummyVars( ~ ., data = svm_train)
+svm.training <- data.frame(predict(dmy, newdata = svm_train))
+svm.data <- cbind(svm.training, body_type)
+split <- createDataPartition(y = svm.data$body_type, p = 0.7, list = FALSE)
+training <- svm.data[split, ]
+testing <- svm.data[-split, ]
+
+#svm.fit <- svm(body_type ~., data = training, kernel = "radial", gamma = 1, cost = 1)
+
+kernel <- c("linear", "radial", "polynomial")
+
+for (element in kernel){
+  tune.fit <- tune(svm, body_type ~., data = training, kernel = "radial",
+                 ranges = list(cost = c(0.1,0.3,0.5,1), gamma = c(0.1,1,3,4,6)),
+                 tunecontrol = tune.control(cross = 5))
+}
+
+test_pred <- predict(tune.fit$best.model, newdata = testing)
+confusionMatrix(test_pred, testing$body_type)
+print(tune.fit$performances)
+print(tune.fit$best.model)
+```
+
+Without cross validation and without tuning 42% accuracy.
+With tuning and cross validation (cost = 1.0, gamma = 0.1, kernel = "radial"): 48.03% accuracy and 0.51 error
+
+
+To get a better performance for predicting the body_type we would need more specific data about the cars like weight and size of the car.
+
+# ANN
+
+Neural networks represent another viable option for fitting a model to predict the *body_type* variable.
+
+Below we execute the model with the same 5000 observations.
+
+## Preparing the data for training
+
+```{r ann preperation}
+library(caret)
+# preprocessing
+cars_data <- na.omit(cars_data)
+
+#divide data in training and target
+cars_train <- cars_data
+cars_train$body_type <- NULL
+body_type <- cars_data %>% pull(body_type)
+dmy <- dummyVars( ~ ., data = cars_train)
+cars_training <- data.frame(predict(dmy, newdata = cars_train))
+cars_training <- cbind(cars_training, body_type)
+
+# split the data in train and test data
+parts <- createDataPartition(cars_training$body_type, p = 0.8, list = FALSE)
+train <- cars_training %>% slice(parts)
+test <- cars_training %>% slice(-parts)
+```
+
+
+## Training and testing the neural network
+
+We normalize data and execute the neural network with cross validation and hyperparameter tuning
+Haven't included more variables due to unmanageable lenght of training time.
+
+We tuned the model with different hidden amounts of neurons.
+We never fitted a model with more than one hidden layer as for most problems one hidden layer should suffice.
+We also fitted the model with different values for the decay parameter.
+
+```{r ann training}
+#install.packages("BBmisc")
+library(BBmisc)
+train_norm <- normalize(train)
+test_norm <- normalize(test)
+set.seed(43)
+fitControl <- trainControl(method = "repeatedcv",
+                           number = 3,
+                           repeats = 5)
+my.grid <- expand.grid(size = seq(from = 2, to = 10, by = 2),
+                       decay = seq(from = 0.05, to = 0.5, by = 0.05))
+fit <- train(body_type ~ ., data = train_norm,
+             method = "nnet", metric = "Accuracy",
+             maxit = 100, trControl = fitControl,
+             tuneGrid = my.grid, preProcess = c('center', 'scale'))
+plot(fit)
+predict.test <- predict(fit, newdata = test_norm)
+predict.tr <- predict(fit, newdata = train_norm)
+matrix <- confusionMatrix(data = predict.test, reference = test_norm$body_type, positive = "truth")
+matrix2 <- confusionMatrix(data = predict.tr, reference = train_norm$body_type, positive = "truth")
+print(matrix$overall)
+print(matrix2$overall)
+```
+
+In the plot we can see a decay of 0.5 and 8 hidden neurons result in the best fit over an average of 5 cross validations. This resulted in a model with an accuracy of 52%, which represents a slight improvement on the svm model.
+
+
+
+# ABM - ABC
+
+To create the simulation the following lines of code were used:
+
+First one needs to load the libraries and initiate the range of agents and pubs.
+As in the task mentioned, the solutions could be between 1 and 20 pubs and 40 to 100 agents. 
+```{r ABM_set_variables, eval=FALSE, cache=TRUE}
+rm(list = ls(all = TRUE))
+
+library(NetLogoR)
+library(stringr)
+library(ggplot2)
+library(minpack.lm)
+
+pubs<-c(1:20)
+agents<-c(40:100)
+```
+Below the models are simulated iterating over all the possible combinations of *pubs* and *agents*. 
+```{r create_simulations, eval=FALSE, cache=TRUE}
+for (number_pubs in pubs) {
+  for (number_agents in agents) {
+    simtime<-100 
+    gridSize_x<-10
+    gridSize_y<-10
+    displacement_normal<-0.1
+    displacement_pub<-0.01
+    plot_data_out<-numeric()
+    number_agents
+    number_pubs
+    
+    w1 <- createWorld(minPxcor = 0, maxPxcor = gridSize_x-1,
+                      minPycor = 0, maxPycor = gridSize_y-1)
+    x_pub <- randomPxcor(w1,number_pubs)
+    y_pub <- randomPycor(w1,number_pubs)
+    w1 <- NLset(world = w1, agents = patches(w1), val = 0)
+    w1 <- NLset(world = w1, agents = patch(w1, x_pub, y_pub), val = 1)
+    # agents set up, this is about the moving objects (traditionally named turtles)
+    t1 <- createTurtles(n = number_agents,
+                        coords = randomXYcor(w1, n = number_agents),
+                        breed="S", color="black")
+    t1 <- NLset(turtles = t1, agents = turtle(t1, who = 0), var = "breed", val = "I")
+    t1 <- NLset(turtles = t1, agents = turtle(t1, who = 0), var = "color", val = "red")
+    t1 <- turtlesOwn(turtles = t1, tVar = "displacement", tVal = displacement_normal)
+    
+    # one time step
+    for (time in 1:simtime) {
+      
+      t1 <- fd(turtles = t1, dist=t1$displacement,
+               world = w1, torus = TRUE, out = FALSE)
+      t1 <- right(turtles = t1, angle = sample(-20:20, 1, replace = F))
+
+      meet <- turtlesOn(world = w1, turtles = t1,
+                        agents = t1[of(agents = t1, var = "breed")=="I"])
+      t1 <- NLset(turtles = t1, agents = meet, var = "breed", val = "I")
+      t1 <- NLset(turtles = t1, agents = meet, var = "color", val = "red")
+      
+      pub <- turtlesOn(world = w1, turtles = t1,
+                       agents = patch(w1, x_pub, y_pub))
+      # in the pub
+      t1 <- NLset(turtles = t1, agents = turtle(t1, who = pub$who),
+                  var = "displacement", val = displacement_pub)
+      # out of the pub
+      t1 <- NLset(turtles = t1, agents = turtle(t1, who = t1[-(pub$who+1)]$who),
+                  var = "displacement", val = displacement_normal)
+      
+      # store time-course data for plotting in the end
+      contaminated_counter<-sum(str_count(t1$color, "red"))
+      tmp_data<-c(time,contaminated_counter)
+      plot_data_out<-rbind(plot_data_out, tmp_data)
+      
+    }
+    #calculate s curve
+    df <- as.data.frame(plot_data_out)
+    names(df) <- c("time","contaminated_counter")
+    x <- df$time
+    y <- df$contaminated_counter
+    model <- nlsLM(y ~ d + (a-d) / (1 + (x/c)^b) ,
+                   start = list(a = 3, b = 4, c = 600, d = 1000))
+    fit_x <- data.frame(x = seq(min(x),max(x),len = 100))
+    fit_y <- predict(model, newdata = fit_x)
+    fit_df <- as.data.frame(cbind(fit_x,fit_y))
+    names(fit_df)<-c("x","y")
+    fitted_function <- data.frame(x = seq(min(x),max(x),len = 100))
+    #lines(fitted_function$x,predict(model,fitted_function = fitted_function))
+    simulation_run_name <- paste0("sim_",number_agents,"_",number_pubs)
+    varied_params <- c(number_agents,number_pubs)
+    summary_stat <- c( simulation_run_name, varied_params,
+                       as.vector(model$m$getPars()) )
+    write.table(as.data.frame(t(summary_stat)), "./summary_stat.csv",
+                sep = ",", col.names = FALSE, row.names=FALSE, append = TRUE)
+    
+  }
+}
+```
+
+## ABC
+Parse the data for ABC
+```{r ABC1,  message=FALSE, warning=FALSE}
+library(abc)
+
+sim <- read.csv(file="./summary_stat.csv",header=FALSE)
+obs_data <- read.table(file="./ABC/obs_data.dat",header=FALSE)
+sim_param <- sim[2:3]
+sim_data <- sim[4:7]
+```
+Find the observation that fits the real world scenario the best.
+```{r ABC2, warning=FALSE}
+res <- abc(target=obs_data,
+           param=sim_param,
+           sumstat=sim_data,
+           tol=0.005,
+           transf=c("log"),
+           method="neuralnet")
+
+res$adj.values
+plot(res, param=sim_param)
+```
+This is an indicator that the given data comes from a real world scenario with 45 or 46 *agents* and 3 *pubs*.
